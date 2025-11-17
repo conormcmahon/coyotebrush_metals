@@ -1,0 +1,190 @@
+---
+title: "Data Exploration"
+output: html_document
+date: "2025-11-17"
+---
+
+```{r setup, include=FALSE, fig.widt=4, fig.height=3, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(kableExtra)
+
+```
+
+Load in the data
+
+
+```{r}
+
+scan_data <- read_csv("sbbg_bonus_scans.csv", show_col_types = FALSE) %>%
+  janitor::clean_names() %>%
+  dplyr::select(-bismuth)
+coyotebrush_data <- scan_data %>% 
+  filter(genus == "Baccharis")
+print("These taxa were scanned: ")
+print(unique(paste(coyotebrush_data$genus, " ", coyotebrush_data$species, sep="")) %>% sort())
+
+```
+
+Now lets compare the metal data by sex and by gall vs. normal tissue
+
+
+```{r}
+
+coyotebrush_data_long <- coyotebrush_data %>% 
+    pivot_longer(25:53, names_to="element", values_to="concentration") 
+coyotebrush_sex_differences <- coyotebrush_data_long %>%
+    filter(notes %in% c("Female", "Male")) %>% 
+    group_by(catalognumber, element) %>% 
+    summarize(female_mean = mean(concentration * (notes == "Female")),
+              female_sd = sd(concentration * (notes == "Female")),
+              male_mean = mean(concentration * (notes == "Male")),
+              male_sd = sd(concentration * (notes == "Male")),
+              difference = female_mean - male_mean) %>% 
+  group_by(element) %>%
+  summarize(p_value = as.numeric(t.test(female_mean, male_mean, paired=TRUE)$p.value),
+            t = as.numeric(t.test(female_mean, male_mean, paired=TRUE)$statistic),
+            difference = as.numeric(t.test(female_mean, male_mean, paired=TRUE)$estimate),
+            female_total_mean = mean(female_mean),
+            female_individual_sd = mean(female_sd),
+            female_btwn_sd = sd(female_mean),
+            female_total_sd = sqrt(female_individual_sd^2 + female_btwn_sd^2),
+            male_total_mean = mean(male_mean),
+            male_individual_sd = mean(male_sd),
+            male_btwn_sd = sd(male_mean),
+            male_total_sd = sqrt(male_individual_sd^2 + male_btwn_sd^2))
+coyotebrush_sex_differences %>% 
+  kable()
+
+write_csv(coyotebrush_sex_differences, "coyotebrush_sex_differences.csv")
+
+most_assymetric_elements <- (coyotebrush_sex_differences %>% 
+                               arrange(p_value))[1:5,]$element
+print(paste("These are the elements with the largest differences between males and females:", most_assymetric_elements))
+
+```
+
+Next make some plots 
+
+```{r}
+
+generateSexPlot <- function(target_element){
+  # Get sensible bounds for axes - next multiple of 5 which is greater than the target
+  max_value <- max((coyotebrush_data_long %>% 
+                     filter(notes %in% c("Female", "Male"),
+                            element == target_element))$concentration)
+  max_value <- ceiling(max_value / 5 * 1.1) * 5
+  # Generate dataset with sd, mean, min, and max values in each voucher
+  plot_data <- coyotebrush_data_long %>% 
+           filter(element == target_element,
+                  notes %in% c("Female", "Male")) %>%
+           group_by(catalognumber, notes) %>% 
+           summarize(sd = sd(concentration),
+                     concentration = mean(concentration)) %>%
+           pivot_wider(names_from = "notes", values_from = c("concentration", "sd"))
+  # Create and style plot
+  output_plot <- ggplot(plot_data) + 
+    geom_errorbar(aes(x=concentration_Male, y=concentration_Female, 
+                      xmin = concentration_Male - sd_Male, xmax = concentration_Male + sd_Male), col="gray") + 
+    geom_errorbar(aes(x=concentration_Male, y=concentration_Female, 
+                      ymin = concentration_Female - sd_Female, ymax = concentration_Female + sd_Female), col="gray") + 
+    geom_point(aes(x = concentration_Male, y = concentration_Female)) + 
+    geom_abline(slope = 1, intercept = 0, col="gray", linetype="dashed") + 
+    theme_bw() + 
+    ggtitle(paste("Sex-based Differences in", str_to_title(target_element))) + 
+    scale_x_continuous(limits=c(0, max_value), expand=c(0,0)) + 
+    scale_y_continuous(limits=c(0, max_value), expand=c(0,0)) + 
+    xlab("Male Concentration") + 
+    ylab("Female Concentration")
+  plot(output_plot)
+  ggsave(paste("output_plots/", target_element, "_sex_plot.png", sep=""), width=4, height=4.25)
+}
+lapply(unique(coyotebrush_data_long$element),
+       generateSexPlot)
+
+```
+
+
+
+
+
+
+
+
+
+
+Now, repeat for gall vs. non-gall tissues
+
+```{r}
+
+coyotebrush_gall_differences <- coyotebrush_data_long %>%
+    filter(notes %in% c("NoGall", "Gall")) %>% 
+    group_by(catalognumber, element) %>% 
+    summarize(not_gall_mean = mean(concentration * (notes == "NoGall")),
+              not_gall_sd = sd(concentration * (notes == "NoGall")),
+              gall_mean = mean(concentration * (notes == "Gall")),
+              gall_sd = sd(concentration * (notes == "Gall")),
+              difference = gall_mean - not_gall_mean) %>% 
+  group_by(element) %>%
+  summarize(p_value = as.numeric(t.test(not_gall_mean, gall_mean, paired=TRUE)$p.value),
+            t = as.numeric(t.test(not_gall_mean, gall_mean, paired=TRUE)$statistic),
+            difference = as.numeric(t.test(not_gall_mean, gall_mean, paired=TRUE)$estimate),
+            not_gall_total_mean = mean(not_gall_mean),
+            not_gall_individual_sd = mean(not_gall_sd),
+            not_gall_btwn_sd = sd(not_gall_mean),
+            not_gall_total_sd = sqrt(not_gall_individual_sd^2 + not_gall_btwn_sd^2),
+            gall_total_mean = mean(gall_mean),
+            gall_individual_sd = mean(gall_sd),
+            gall_btwn_sd = sd(gall_mean),
+            gall_total_sd = sqrt(gall_individual_sd^2 + gall_btwn_sd^2))
+coyotebrush_gall_differences %>% 
+  kable()
+
+write_csv(coyotebrush_gall_differences, "coyotebrush_gall_differences.csv")
+
+most_assymetric_elements_galled <- (coyotebrush_gall_differences %>% 
+                               arrange(p_value))[1:5,]$element
+print(paste("These are the elements with the largest differences between galls vs. ungalled tissue:", most_assymetric_elements_galled))
+
+```
+
+Next make some plots 
+
+```{r}
+
+generateGallPlot <- function(target_element){
+  # Get sensible bounds for axes - next multiple of 5 which is greater than the target
+  max_value <- max((coyotebrush_data_long %>% 
+                     filter(notes %in% c("Gall", "NoGall"),
+                            element == target_element))$concentration)
+  max_value <- ceiling(max_value / 5 * 1.1) * 5
+  # Generate dataset with sd, mean, min, and max values in each voucher
+  plot_data <- coyotebrush_data_long %>% 
+           filter(element == target_element,
+                  notes %in% c("Gall", "NoGall")) %>%
+           group_by(catalognumber, notes) %>% 
+           summarize(sd = sd(concentration),
+                     concentration = mean(concentration)) %>%
+           pivot_wider(names_from = "notes", values_from = c("concentration", "sd"))
+  # Create and style plot
+  output_plot <- ggplot(plot_data) + 
+    geom_errorbar(aes(x=concentration_NoGall, y=concentration_Gall, 
+                      xmin = concentration_NoGall - sd_NoGall, xmax = concentration_NoGall + sd_NoGall), col="gray") + 
+    geom_errorbar(aes(x=concentration_NoGall, y=concentration_Gall, 
+                      ymin = concentration_Gall - sd_Gall, ymax = concentration_Gall + sd_Gall), col="gray") + 
+    geom_point(aes(x = concentration_NoGall, y = concentration_Gall)) + 
+    geom_abline(slope = 1, intercept = 0, col="gray", linetype="dashed") + 
+    theme_bw() + 
+    ggtitle(paste("Gall vs. Stem Differences in", str_to_title(target_element))) + 
+    scale_x_continuous(limits=c(0, max_value), expand=c(0,0)) + 
+    scale_y_continuous(limits=c(0, max_value), expand=c(0,0)) + 
+    xlab("Stem Concentration") + 
+    ylab("Gall Concentration")
+  plot(output_plot)
+  ggsave(paste("output_plots/", target_element, "_gall_plot.png", sep=""), width=4, height=4.25)
+}
+lapply(unique(coyotebrush_data_long$element),
+       generateGallPlot)
+
+```
